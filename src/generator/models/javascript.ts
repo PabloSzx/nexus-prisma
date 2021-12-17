@@ -119,15 +119,19 @@ export function createModuleSpec(params: {
     content: dedent`
       ${imports}
 
-      const gentimeSettings = ${JSON.stringify(gentimeSettings.data, null, 2)}
+      const gentimeSettings = ${JSON.stringify(
+        { ...gentimeSettings, prismaClientImportId: '@prisma/client' }.data,
+        null,
+        2
+      )}
 
       const dmmf = getPrismaClientDmmf({
         // JSON stringify the values to ensure proper escaping
         // Details: https://github.com/prisma/nexus-prisma/issues/143
         // TODO test that fails without this code
-        require: () => require(${JSON.stringify(gentimeSettings.data.prismaClientImportId)}),
+        require: () => require("@prisma/client"),
         importId: gentimeSettings.prismaClientImportId,
-        importIdResolved: require.resolve(${JSON.stringify(gentimeSettings.data.prismaClientImportId)})
+        importIdResolved: require.resolve("@prisma/client")
       })
 
       const models = ModelsGenerator.JS.createNexusTypeDefConfigurations(dmmf, {
