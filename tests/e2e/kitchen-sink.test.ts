@@ -1,16 +1,15 @@
-import * as Path from 'path'
 import debug from 'debug'
 import dindist from 'dindist'
 import * as Execa from 'execa'
 import { gql } from 'graphql-request'
 import * as GQLScalars from 'graphql-scalars'
 import { konn, providers } from 'konn'
-import { Providers } from 'konn/providers'
+import * as Path from 'path'
 import stripAnsi from 'strip-ansi'
 import { inspect } from 'util'
+
 import { envarSpecs } from '../../src/lib/peerDepValidator'
-import { assertBuildPresent } from '../__helpers__/helpers'
-import { createPrismaSchema } from '../__helpers__/testers'
+import { createPrismaSchema } from '../__helpers__/helpers'
 import { graphQLClient } from '../__providers__/graphqlClient'
 import { project } from '../__providers__/project'
 
@@ -78,7 +77,7 @@ beforeEach(() => {
       build: 'tsc',
       start: 'node build/server',
       'dev:server': 'yarn ts-node-dev --transpile-only server',
-      'db:migrate': 'prisma db push --force-reset && ts-node prisma/seed',
+      'db:migrate': 'prisma db push --force-reset --accept-data-loss && ts-node prisma/seed',
     },
     dependencies: {
       dotenv: '^9.0.0',

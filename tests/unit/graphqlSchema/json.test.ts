@@ -1,17 +1,18 @@
 import dedent from 'dindist'
 import { objectType } from 'nexus'
-import NexusPrismaScalars from '../../../src/entrypoints/scalars'
+
+import * as NexusPrismaScalars from '../../../src/entrypoints/scalars'
 import { testGraphqlSchema } from '../../__helpers__/testers'
 
 testGraphqlSchema({
   description: 'When a JSON field is defined in the Prisma schema it can be projected into the GraphQL API',
-  datasourceSchema: dedent`
+  database: dedent`
     model Foo {
       id   String @id
       json Json
     }
   `,
-  apiSchema({ Foo }) {
+  api({ Foo }) {
     return [
       NexusPrismaScalars.BigInt,
       NexusPrismaScalars.Bytes,

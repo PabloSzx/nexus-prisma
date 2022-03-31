@@ -1,17 +1,20 @@
-import type { DMMF } from '@prisma/client/runtime'
 import dedent from 'dindist'
 import { chain } from 'lodash'
 import * as Nexus from 'nexus'
 import { NexusEnumTypeConfig, NexusListDef, NexusNonNullDef, NexusNullDef } from 'nexus/dist/core'
+import { inspect } from 'util'
+
+import type { DMMF } from '@prisma/client/runtime'
+
 import { MaybePromise, RecordUnknown, Resolver } from '../../helpers/utils'
+import { Messenger } from '../../lib/messenger'
 import { PrismaDmmf } from '../../lib/prisma-dmmf'
 import { PrismaDocumentation } from '../../lib/prisma-documentation'
 import { PrismaUtils } from '../../lib/prisma-utils'
-import { Gentime } from '../gentime/settingsSingleton'
 import { createWhereUniqueInput } from '../../lib/prisma-utils/whereUniqueInput'
-import { Runtime } from '../runtime/settingsSingleton'
-import { ModuleSpec } from '../types'
-import { fieldTypeToGraphQLType } from './declaration'
+import { Module } from '../helpers/types'
+import { Settings } from '../Settings'
+import { fieldTypeToGraphQLType } from './TS'
 
 type PrismaEnumName = string
 
@@ -29,18 +32,18 @@ type NexusTypeDefConfigurations = Record<
 >
 
 export type Settings = {
-  runtime: Runtime.Settings
-  gentime: Gentime.SettingsData
+  runtime: Settings.Runtime.Manager
+  gentime: Settings.Gentime.Data
 }
 
 /**
  * Create the module specification for the JavaScript runtime.
  */
-export function createModuleSpec(params: {
+export const createModule = (params: {
   /**
    * Resolved generator settings (whatever user supplied merged with defaults).
    */
-  gentimeSettings: Gentime.Settings
+  gentimeSettings: Settings.Gentime.Manager
   /**
    * Should the module be generated using ESM instead of CJS?
    */
@@ -49,14 +52,14 @@ export function createModuleSpec(params: {
    * Detailed data about the Prisma Schema contents and available operations over its models.
    */
   dmmf: DMMF.Document
-}): ModuleSpec {
+}): Module => {
   const { esm, gentimeSettings, dmmf } = params
 
   const esmModelExports =
     dmmf.datamodel.models
       .map((model) => {
         return dedent`
-        export const ${model.name} = models['${model.name}']
+        export const ${model.name} = nexusTypeDefConfigurations['${model.name}']
       `
       })
       .join('\n') || `// N/A -- You have not defined any models in your Prisma Schema.`
@@ -65,7 +68,7 @@ export function createModuleSpec(params: {
     dmmf.datamodel.enums
       .map((enum_) => {
         return dedent`
-          export const ${enum_.name} = models['${enum_.name}']
+          export const ${enum_.name} = nexusTypeDefConfigurations['${enum_.name}']
         `
       })
       .join('\n') || `// N/A -- You have not defined any enums in your Prisma Schema.`
@@ -78,7 +81,7 @@ export function createModuleSpec(params: {
 
         // Static API Exports
 
-        export const $settings = Runtime.settings.change
+        export const $settings = RuntimeSettings.changeSettings
 
         // Reflected Model Exports
 
@@ -90,8 +93,8 @@ export function createModuleSpec(params: {
       `
     : dedent`
         module.exports = {
-          $settings: Runtime.settings.change,
-          ...models,
+          $settings: RuntimeSettings.changeSettings,
+          ...nexusTypeDefConfigurations,
         }
       `
 
@@ -104,13 +107,13 @@ export function createModuleSpec(params: {
   const imports = esm
     ? dedent`
         import { getPrismaClientDmmf } from '${importSpecifierToNexusPrismaSourceDirectory}/helpers/prisma'
-        import * as ModelsGenerator from '${importSpecifierToNexusPrismaSourceDirectory}/generator/models/index'
-        import { Runtime } from '${importSpecifierToNexusPrismaSourceDirectory}/generator/runtime/settingsSingleton'
+        import { ModuleGenerators } from '${importSpecifierToNexusPrismaSourceDirectory}/generator/ModuleGenerators/index'
+        import * as RuntimeSettings from '${importSpecifierToNexusPrismaSourceDirectory}/generator/Settings/Runtime/index'
       `
     : dedent`
         const { getPrismaClientDmmf } = require('${importSpecifierToNexusPrismaSourceDirectory}/helpers/prisma')
-        const ModelsGenerator = require('${importSpecifierToNexusPrismaSourceDirectory}/generator/models/index')
-        const { Runtime } = require('${importSpecifierToNexusPrismaSourceDirectory}/generator/runtime/settingsSingleton')
+        const { ModuleGenerators } = require('${importSpecifierToNexusPrismaSourceDirectory}/generator/ModuleGenerators/index')
+        const RuntimeSettings = require('${importSpecifierToNexusPrismaSourceDirectory}/generator/Settings/Runtime/index')
       `
 
   return {
@@ -119,24 +122,21 @@ export function createModuleSpec(params: {
     content: dedent`
       ${imports}
 
-      const gentimeSettings = ${JSON.stringify(
-        { ...gentimeSettings, prismaClientImportId: '@prisma/client' }.data,
-        null,
-        2
-      )}
+      const gentimeSettingsData = ${JSON.stringify(gentimeSettings.data, null, 2)}
+      const runtimeSettingsManager = RuntimeSettings.settings
 
       const dmmf = getPrismaClientDmmf({
         // JSON stringify the values to ensure proper escaping
         // Details: https://github.com/prisma/nexus-prisma/issues/143
         // TODO test that fails without this code
-        require: () => require("@prisma/client"),
-        importId: gentimeSettings.prismaClientImportId,
-        importIdResolved: require.resolve("@prisma/client")
+        require: () => require(${JSON.stringify(gentimeSettings.data.prismaClientImportId)}),
+        importId: gentimeSettingsData.prismaClientImportId,
+        importIdResolved: require.resolve(${JSON.stringify(gentimeSettings.data.prismaClientImportId)})
       })
 
-      const models = ModelsGenerator.JS.createNexusTypeDefConfigurations(dmmf, {
-        runtime: Runtime.settings,
-        gentime: gentimeSettings,
+      const nexusTypeDefConfigurations = ModuleGenerators.JS.createNexusTypeDefConfigurations(dmmf, {
+        gentime: gentimeSettingsData,
+        runtime: runtimeSettingsManager,
       })
 
       ${exports}
@@ -144,10 +144,10 @@ export function createModuleSpec(params: {
   }
 }
 
-export function createNexusTypeDefConfigurations(
+export const createNexusTypeDefConfigurations = (
   dmmf: DMMF.Document,
   settings: Settings
-): NexusTypeDefConfigurations {
+): NexusTypeDefConfigurations => {
   return {
     ...createNexusObjectTypeDefConfigurations(dmmf, settings),
     ...createNexusEnumTypeDefConfigurations(dmmf, settings),
@@ -171,10 +171,10 @@ type NexusObjectTypeDefConfiguration = Record<
 /**
  * Create Nexus object type definition configurations for Prisma models found in the given DMMF.
  */
-function createNexusObjectTypeDefConfigurations(
+const createNexusObjectTypeDefConfigurations = (
   dmmf: DMMF.Document,
   settings: Settings
-): NexusObjectTypeDefConfigurations {
+): NexusObjectTypeDefConfigurations => {
   return chain(dmmf.datamodel.models)
     .map((model) => {
       return {
@@ -208,7 +208,7 @@ const prismaNodeDocumentationToDescription = (params: {
 
 // Complex return type I don't really understand how to easily work with manually.
 // eslint-disable-next-line
-export function prismaFieldToNexusType(field: DMMF.Field, settings: Settings) {
+export const prismaFieldToNexusType = (field: DMMF.Field, settings: Settings) => {
   const graphqlType = fieldTypeToGraphQLType(field, settings.gentime)
 
   if (field.isList) {
@@ -248,11 +248,11 @@ export function prismaFieldToNexusType(field: DMMF.Field, settings: Settings) {
  *
  *          but this is overall the better way to handle this detail it seems.
  */
-export function nexusResolverFromPrismaField(
+export const nexusResolverFromPrismaField = (
   model: DMMF.Model,
   field: DMMF.Field,
   settings: Settings
-): undefined | Resolver {
+): undefined | Resolver => {
   if (field.kind !== 'object') {
     return undefined
   }
@@ -260,21 +260,80 @@ export function nexusResolverFromPrismaField(
   return (source: RecordUnknown, _args: RecordUnknown, ctx: RecordUnknown): MaybePromise<unknown> => {
     const whereUnique = createWhereUniqueInput(source, model)
 
-    // eslint-disable-next-line
-    const PrismaClientPackage = require(settings.gentime.prismaClientImportId)
-
-    // eslint-disable-next-line
-    if (!(ctx[settings.runtime.data.prismaClientContextField] instanceof PrismaClientPackage.PrismaClient)) {
-      // TODO rich errors
-      throw new Error(
-        `The GraphQL context.${settings.runtime.data.prismaClientContextField} value is not an instance of the Prisma Client (class reference for check imported from ${settings.gentime.prismaClientImportId}).`
-      )
-    }
-
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const prisma: any = ctx[settings.runtime.data.prismaClientContextField]
+    const prismaOrmModelPropertyName = PrismaUtils.typeScriptOrmModelPropertyNameFromModelName(model.name)
+
+    if (settings.runtime.data.checks.PrismaClientOnContext.enabled) {
+      const performInstanceOfStrategy = () => {
+        // eslint-disable-next-line
+        let PrismaClientPackage: any
+        try {
+          // eslint-disable-next-line
+          PrismaClientPackage = require(settings.gentime.prismaClientImportId)
+        } catch (e) {
+          // TODO rich errors
+          throw new Error(
+            `Could not perform "PrismaClientOnContext" check because there was an error while trying to import Prisma Client:\n\n${String(
+              e
+            )}`
+          )
+        }
+
+        if (
+          !(
+            PrismaClientPackage !== null &&
+            typeof PrismaClientPackage === 'object' &&
+            // eslint-disable-next-line
+            typeof PrismaClientPackage.PrismaClient === 'function'
+          )
+        ) {
+          // TODO rich errors
+          throw new Error(
+            `Could not perform "PrismaClientOnContext" check because could not get a reference to a valid Prisma Client class. Found:\n\n${inspect(
+              PrismaClientPackage
+            )}`
+          )
+        }
+
+        // eslint-disable-next-line
+        return prisma instanceof PrismaClientPackage.PrismaClient
+      }
+      if (settings.runtime.data.checks.PrismaClientOnContext.strategy === 'duckType') {
+        if (!PrismaUtils.duckTypeIsPrismaClient(prisma, prismaOrmModelPropertyName)) {
+          console.error(1)
+          // TODO rich errors
+          throw new Error(
+            `Check "PrismaClientOnContext" failed using "duckType" strategy. The GraphQL context.${settings.runtime.data.prismaClientContextField} value is not an instance of the Prisma Client.`
+          )
+        }
+      } else if (settings.runtime.data.checks.PrismaClientOnContext.strategy === 'instanceOf') {
+        if (!performInstanceOfStrategy()) {
+          throw new Error(
+            `Check "PrismaClientOnContext" failed using "instanceOf" strategy. The GraphQL context.${settings.runtime.data.prismaClientContextField} value is not an instance of the Prisma Client.`
+          )
+        }
+      } else {
+        if (!performInstanceOfStrategy()) {
+          if (!PrismaUtils.duckTypeIsPrismaClient(prisma, prismaOrmModelPropertyName)) {
+            // TODO rich errors
+            throw new Error(
+              `Check "PrismaClientOnContext" failed using "instanceOf_duckType_fallback" strategy. The GraphQL context.${settings.runtime.data.prismaClientContextField} value is not an instance of the Prisma Client.`
+            )
+          }
+          // DuckType passed but InstanceOf strategy failed, so show a warning.
+          Messenger.showWarning({
+            code: 'PrismaClientOnContextInstanceOfStrategyFailed',
+            title: `Prisma Client on GraphQL context failed being checked using instanceof`,
+            reason: `The Prisma Client class reference imported from ${settings.gentime.prismaClientImportId} is not the same class used by you to create your Prisma Client instance.`,
+            consequence: `Maybe none since duck typing fallback indicates that the Prisma Client on the GraphQL context is actually valid. However relying on duck typing is hacky.`,
+          })
+        }
+      }
+    }
+
     // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access
-    const prismaModel = prisma[PrismaUtils.typeScriptOrmModelPropertyNameFromModelName(model.name)]
+    const prismaModel = prisma[prismaOrmModelPropertyName]
 
     // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
     if (typeof prismaModel.findUnique !== 'function') {
@@ -284,7 +343,6 @@ export function nexusResolverFromPrismaField(
 
     // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
     const findUnique = prismaModel.findUnique as (query: unknown) => MaybePromise<unknown>
-
     const result: unknown = findUnique({
       where: whereUnique,
       /**
@@ -318,10 +376,10 @@ type NexusEnumTypeDefConfiguration = AnyNexusEnumTypeConfig
 /**
  * Create Nexus enum type definition configurations for Prisma enums found in the given DMMF.
  */
-function createNexusEnumTypeDefConfigurations(
+const createNexusEnumTypeDefConfigurations = (
   dmmf: DMMF.Document,
   settings: Settings
-): NexusEnumTypeDefConfigurations {
+): NexusEnumTypeDefConfigurations => {
   return chain(dmmf.datamodel.enums)
     .map((enum_): AnyNexusEnumTypeConfig => {
       return {

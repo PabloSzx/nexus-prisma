@@ -1,3 +1,1 @@
-import { Gentime } from '../generator/gentime/settingsSingleton'
-
-export const settings = Gentime.changeSettings
+export { changeSettings as settings } from '../generator/Settings/Gentime'
