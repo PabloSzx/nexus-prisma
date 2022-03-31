@@ -1,6 +1,6 @@
 {
   "name": "@pablosz/nexus-prisma",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "main": "./dist-cjs/entrypoints/main.js",
   "repository": "git@github.com:prisma/nexus-prisma.git",
   "author": "Jason Kuhrt",
@@ -142,7 +142,7 @@
     "pkg-up": "^3.1.0",
     "pluralize": "^8.0.0",
     "semver": "^7.3.5",
-    "setset": "^0.0.9",
+    "setset": "npm:@pablosz/setset@1.0.0",
     "ts-replace-all": "^1.0.0",
     "tslib": "^2.3.1"
   },
